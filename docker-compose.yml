@@ -25,7 +25,41 @@ x-airflow-common: &airflow-common
       condition: service_healthy
 
 services:
-  # Warehouse — analytics database
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      retries: 5
+    networks:
+      - data_platform
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      until /usr/bin/mc alias set local http://minio:9000 minioadmin minioadmin; do echo 'waiting for minio...'; sleep 2; done;
+      /usr/bin/mc mb local/olist-raw --ignore-existing;
+      /usr/bin/mc mb local/olist-processed --ignore-existing;
+      echo 'buckets created';
+      "
+    networks:
+      - data_platform
+
   postgres-warehouse:
     image: postgres:15-alpine
     container_name: postgres-warehouse
@@ -45,7 +79,6 @@ services:
     networks:
       - data_platform
 
-  # Airflow metadata database
   postgres-airflow:
     image: postgres:15-alpine
     container_name: postgres-airflow
@@ -62,7 +95,6 @@ services:
     networks:
       - data_platform
 
-  # Airflow init — runs migrations and creates user
   airflow-init:
     <<: *airflow-common
     container_name: airflow-init
@@ -115,7 +147,6 @@ services:
     networks:
       - data_platform
 
-  # BI tool
   metabase:
     image: metabase/metabase:latest
     container_name: metabase
@@ -132,6 +163,7 @@ volumes:
   warehouse_data:
   airflow_metadata:
   metabase_data:
+  minio_data:
 
 networks:
   data_platform:
