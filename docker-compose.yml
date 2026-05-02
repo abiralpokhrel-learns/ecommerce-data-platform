@@ -1,6 +1,5 @@
-version: '3.8'
-
 x-airflow-common: &airflow-common
+  image: ecommerce-airflow:latest
   build:
     context: ./docker
     dockerfile: Dockerfile.airflow
