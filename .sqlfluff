@@ -1,0 +1,38 @@
+[sqlfluff]
+# SQL dialect — matches our Postgres warehouse
+dialect = postgres
+
+# Use jinja templater (no live DB needed, faster, more reliable for CI)
+templater = jinja
+
+# Rules to skip (pragmatic choices for this project)
+exclude_rules = L016, L022, L031
+
+[sqlfluff:templater:jinja]
+# Built-in stubs for dbt's ref(), source(), config(), var()
+apply_dbt_builtins = True
+
+[sqlfluff:indentation]
+# Use 4 spaces (matches our SQL files)
+indent_unit = space
+tab_space_size = 4
+
+[sqlfluff:rules:capitalisation.keywords]
+# Lowercase SQL keywords (select, from, where) — matches dbt convention
+capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.identifiers]
+# Lowercase column and table names (snake_case throughout)
+extended_capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.functions]
+# Lowercase function names (count, sum, max)
+extended_capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.literals]
+# Lowercase NULL, TRUE, FALSE
+capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.types]
+# Lowercase type names (varchar, integer, timestamp)
+extended_capitalisation_policy = lower
