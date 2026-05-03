@@ -114,7 +114,7 @@ Dimensions: `dim_customers` (deduplicated by `customer_unique_id`), `dim_product
 
 Seven Metabase tiles backed by the marts: monthly revenue, top categories, orders by state, average delivery days by state, review distribution, late-vs-on-time review impact, and RFM segments.
 
-![Dashboard](docs/screenshots/dashboard_full.png)
+![Dashboard](docs/dashboard_full.png)
 
 ## Data quality
 
