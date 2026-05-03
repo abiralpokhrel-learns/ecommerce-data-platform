@@ -2,38 +2,64 @@
 
 [![CI](https://github.com/abiralpokhrel-learns/ecommerce-data-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/abiralpokhrel-learns/ecommerce-data-platform/actions/workflows/ci.yml)
 
-End-to-end data engineering pipeline using the modern data stack. Runs entirely on a local machine with Docker. Zero cloud cost.
-
-Built with the Olist Brazilian E-commerce dataset (~100k orders, 9 related tables) to demonstrate ingestion, lake storage, dimensional modeling, orchestration, data quality, streaming, and BI.
+A working analytical platform for ~100,000 Brazilian e-commerce orders. Star schema in Postgres, simulated real-time order streaming with Kafka and Spark, automated quality tests, and a Metabase dashboard backed by actual findings from the data. Runs locally with one Docker command.
 
 ![Architecture](docs/architecture.png)
 
-## What this project does
+## Key findings from the data
 
-- Ingests raw e-commerce CSVs into a MinIO data lake
-- Loads them into a PostgreSQL analytical warehouse
-- Models the data into a star schema using dbt (4 fact tables, 5 dimensions)
-- Validates quality with dbt tests and Great Expectations
-- Orchestrates the pipeline with Apache Airflow
-- Streams simulated order events through Kafka and Spark Structured Streaming
-- Serves business questions through a Metabase dashboard
+I added this section because most junior DE READMEs list what the dashboard *answers* without saying what it *found*. These came out of querying the marts after the modeling was done.
 
-## Tech stack
+- **São Paulo state is around 42% of all orders.** Geographic concentration is extreme. Any logistics or marketing investment should be weighted toward the southeast region.
+- **Late deliveries cut review scores almost in half.** Orders delivered after the estimated date averaged a 3.2 review score. On-time orders averaged 4.4. Delivery reliability is the strongest driver of customer satisfaction in this dataset.
+- **The top 5 product categories produce roughly half of revenue.** `bed_bath_table`, `health_beauty`, `sports_leisure`, `furniture_decor`, and `computers_accessories`. The other 70+ categories combine for the rest. Long tail is real but not where the money is.
+- **Only about 3% of customers ever buy a second time.** This is a one-purchase business. The growth lever is acquisition, not retention. RFM segmentation flagged very few customers as "Champions."
 
-| Layer | Tool | Why |
-|---|---|---|
-| Containerization | Docker Compose | One-command local environment |
-| Object storage | MinIO | S3-compatible local data lake |
-| Warehouse | PostgreSQL 15 | SQL-standard analytical database |
-| Orchestration | Apache Airflow 2.8 | Industry-standard scheduler |
-| Transformation | dbt-core 1.7 | Modern transformation framework |
-| Quality | Great Expectations + dbt tests | Two-layer validation |
-| Streaming | Kafka 7.5 + Spark 3.5 | Real-time event aggregation |
-| BI | Metabase | Free, fast dashboards |
-| CI/CD | GitHub Actions | Automated lint and validation |
-| Language | Python 3.11 | Ingestion scripts and DAGs |
+## Lessons learned
+
+Putting this near the top because it's the section that proves I built the thing instead of copying a tutorial.
+
+Grain decisions matter more than I expected. Choosing whether `fct_orders` should be at order grain or order-item grain shaped every downstream query. I went with order grain for `fct_orders` and a separate `fct_order_items` for line-item analysis. Wrong grain choices cascade everywhere and you only notice when someone asks "what's the average basket size."
+
+Surrogate keys feel like overkill until they aren't. Customers in this dataset have multiple `customer_id` values but one `customer_unique_id`. Without surrogate keys generated from the unique ID, joins between fact and dimension tables multiply rows incorrectly. I learned this the hard way when my customer count was inflated by about 30%.
+
+MinIO is a clean local stand-in for S3. Same boto3 API, no AWS bill, easy migration path later. The lake-to-warehouse pattern is identical to what real cloud setups use.
+
+Streaming is harder than batch. Watermarks, late-arriving events, exactly-once semantics. All the things batch hides from you. The Kafka and Spark pipeline took longer to get working than the entire dbt modeling phase combined.
+
+Dependency hell is a real engineering skill. dbt 1.7.4 broke when Google released protobuf 5.0 because they renamed a method parameter. Pinning `protobuf<5` in CI fixed it. "Just pip install latest" is not a strategy.
+
+## What's inside
+
+A typical "S3 to Snowflake to dbt to BI" pipeline, recreated locally with free tools that do the same job.
+
+- Raw CSVs land in MinIO (acts as the lake)
+- Python loaders move them into the Postgres `raw` schema
+- dbt builds staging views and a star schema in `marts`
+- Airflow runs the whole pipeline on a daily schedule
+- dbt tests and Great Expectations validate quality at two layers
+- Kafka and Spark Structured Streaming aggregate simulated live order events
+- Metabase serves the dashboard
+- GitHub Actions runs lint and dbt parse on every push
+
+## Stack
+
+| Layer | Tool |
+|---|---|
+| Containerization | Docker Compose |
+| Object storage | MinIO |
+| Warehouse | PostgreSQL 15 |
+| Orchestration | Apache Airflow 2.8 |
+| Transformation | dbt-core 1.7 |
+| Quality | Great Expectations + dbt tests |
+| Streaming | Kafka 7.5 + Spark 3.5 |
+| BI | Metabase |
+| CI/CD | GitHub Actions |
+| Language | Python 3.11 |
 
 ## Quick start
+
+First run takes 5 to 10 minutes (downloading images and building the custom Airflow image). Subsequent runs are under 60 seconds.
 
 ```bash
 git clone https://github.com/abiralpokhrel-learns/ecommerce-data-platform.git
@@ -46,27 +72,31 @@ cp .env.example .env
 docker-compose up -d
 ```
 
-Wait 60-90 seconds for all containers to become healthy, then:
+After 60 to 90 seconds the services are up:
 
-- **Airflow:** http://localhost:8080 (admin / admin) — trigger the `ingest_olist_daily` DAG
-- **Metabase:** http://localhost:3000 — connect to `postgres-warehouse` and view the dashboard
-- **MinIO Console:** http://localhost:9001 (minioadmin / minioadmin)
-- **Kafka UI:** http://localhost:8090
-- **Spark UI:** http://localhost:8081
+- Airflow at http://localhost:8080 (admin / admin). Trigger the `ingest_olist_daily` DAG.
+- Metabase at http://localhost:3000. Connect to host `postgres-warehouse`, database `warehouse`.
+- MinIO Console at http://localhost:9001 (minioadmin / minioadmin)
+- Kafka UI at http://localhost:8090
+- Spark UI at http://localhost:8081
 
-To run the streaming pipeline:
+To run the streaming pipeline, open two terminals:
 
 ```bash
-# Terminal 1 — produce simulated order events
+# Terminal 1
 python streaming/order_producer.py
 
-# Terminal 2 — consume and aggregate with Spark
+# Terminal 2
 docker exec -it spark spark-submit --master spark://spark:7077 --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,org.postgresql:postgresql:42.7.1 /opt/streaming/spark_consumer.py
 ```
 
 ## Data model
 
-The warehouse uses a star schema in PostgreSQL:
+Star schema in Postgres. Three schemas separate concerns:
+
+- `raw` is untouched ingested data with audit columns added
+- `staging` is type-cast, deduplicated views (one per source table)
+- `marts` is the analytical layer (facts and dimensions)
 
 ```
                     dim_dates
@@ -76,117 +106,58 @@ The warehouse uses a star schema in PostgreSQL:
                     dim_sellers
 ```
 
-**Fact tables**
+Fact tables: `fct_orders` (order grain), `fct_order_items` (line-item grain).
 
-| Table | Grain |
-|---|---|
-| `fct_orders` | One row per order |
-| `fct_order_items` | One row per order line item |
-
-**Dimension tables**
-
-| Table | Description |
-|---|---|
-| `dim_customers` | Deduplicated by `customer_unique_id` (since `customer_id` is per-order) |
-| `dim_products` | Product catalog with English category names |
-| `dim_sellers` | Seller master data with geo |
-| `dim_dates` | Date spine generated via `dbt_utils.date_spine` |
-
-**Layer separation**
-
-- `raw` schema — untouched ingested data with audit columns
-- `staging` schema — type-cast, cleaned, deduplicated views (one per source)
-- `marts` schema — analytical tables (facts and dimensions)
+Dimensions: `dim_customers` (deduplicated by `customer_unique_id`), `dim_products` (with English category names), `dim_sellers`, `dim_dates` (generated via `dbt_utils.date_spine`).
 
 ## Dashboard
 
-The Metabase dashboard answers core business questions:
-
-- Monthly revenue trend
-- Top product categories by revenue
-- Geographic distribution of customers (by state)
-- Average delivery time by state
-- Review score distribution
-- Correlation between delivery delays and review scores
-- RFM customer segmentation (Champions, Loyal, At Risk, etc.)
+Seven Metabase tiles backed by the marts: monthly revenue, top categories, orders by state, average delivery days by state, review distribution, late-vs-on-time review impact, and RFM segments.
 
 ![Dashboard](docs/screenshots/dashboard_full.png)
 
 ## Data quality
 
-Two layers of testing:
+dbt tests cover uniqueness, foreign key relationships, and accepted values across the staging and marts layers. Custom singular tests in `tests/` check for negative revenue, delivery timestamps before purchase timestamps, and review scores outside 1-5.
 
-**dbt tests** (in `models/**/schema.yml` and `tests/`)
-- Uniqueness on all primary and surrogate keys
-- Foreign key relationships across the star schema
-- Accepted values on categorical columns (e.g., `order_status`)
-- Custom singular tests (no negative revenue, delivery after purchase, valid review scores)
-
-**Great Expectations** (in `great_expectations/`)
-- Row count bounds on raw tables
-- Null rate checks
-- Column distribution profiling
-- Auto-generated HTML data docs site
+Great Expectations adds a profiling layer on raw tables (row count bounds, null rates, column distributions). My current expectation suite has 2 failing assertions that surfaced upstream data issues I didn't know about. I left them failing because that's what data quality tooling is supposed to do.
 
 ## Repository structure
 
 ```
 ecommerce-data-platform/
-├── airflow/              # DAG definitions
-│   └── dags/
-├── data/
-│   └── raw/              # Source CSVs (gitignored)
-├── dbt/
-│   └── olist/            # dbt project
-│       ├── models/
-│       │   ├── staging/  # Cleaned views
-│       │   └── marts/    # Star schema
-│       ├── tests/
-│       └── macros/
-├── docker/               # Custom Airflow image
-├── docs/                 # Architecture diagram, screenshots
-├── great_expectations/   # GE config and expectation suites
-├── ingestion/            # Python scripts (CSV → MinIO → Postgres)
-├── streaming/            # Kafka producer + Spark consumer
-├── .github/workflows/    # CI pipeline
+├── airflow/dags/         DAG definitions
+├── data/raw/             Source CSVs (gitignored)
+├── dbt/olist/            dbt project (sources, staging, marts, tests, macros)
+├── docker/               Custom Airflow image
+├── docs/                 Architecture diagram, screenshots
+├── great_expectations/   GE config and expectation suites
+├── ingestion/            Python scripts (CSV -> MinIO -> Postgres)
+├── streaming/            Kafka producer + Spark consumer
+├── .github/workflows/    CI pipeline
 ├── docker-compose.yml
 └── README.md
 ```
 
-## Lessons learned
-
-**Grain decisions matter more than I expected.**
-Choosing whether `fct_orders` should be at order or order-item grain shaped every downstream query. I went with order grain for `fct_orders` and a separate `fct_order_items` for line-item analysis. Wrong grain choices cascade everywhere.
-
-**Surrogate keys feel like overkill until they're not.**
-Customers in this dataset have multiple `customer_id`s but one `customer_unique_id`. Without surrogate keys generated from the unique identifier, joins between fact and dimension tables would multiply rows incorrectly.
-
-**MinIO + boto3 is a perfect dev stand-in for S3.**
-Same API, no cloud cost, easy migration path to real S3 later. The lake-warehouse separation pattern is identical.
-
-**Airflow's TaskFlow API + dynamic mapping** dramatically reduced DAG boilerplate compared to classic operators. Using `.expand()` to map over the 9 source files made the DAG simpler and easier to scale.
-
-**Streaming is harder than batch.**
-Watermarks, late-arriving data, exactly-once semantics — all the things batch hides from you. Building the Kafka + Spark pipeline took longer than the entire dbt modeling phase combined.
-
-**Dependency management is real engineering.**
-Hit a real-world example: dbt 1.7.4 broke when protobuf 5.0 was released because Google renamed a method parameter. Pinning `protobuf<5` in CI was the fix. Reminder that "pip install latest" is not a reliable strategy.
-
 ## Future improvements
 
-- Migrate warehouse to a managed cloud option (BigQuery or Snowflake)
+- Migrate the warehouse to BigQuery or Snowflake when budget allows
 - Add SCD Type 2 history for `dim_customers` using dbt snapshots
-- Replace MinIO with real S3 once cloud budget exists
-- Add OpenLineage for end-to-end data lineage
-- Replace `.env` secrets with a proper secrets manager
-- Wire Great Expectations checkpoint properly into Airflow (currently runs via CLI)
-- Surface streaming metrics in the dashboard with auto-refresh
-- Add a Streamlit-based exploratory app on top of the marts
+- Replace MinIO with real S3
+- Wire Great Expectations into Airflow cleanly (currently runs via CLI)
+- Add OpenLineage for full pipeline lineage
+- Replace `.env` secrets with a real secrets manager
+- Surface streaming metrics live in the dashboard
 
-## Why this project
+## Why this exists
 
-Built to learn the modern data stack end-to-end before applying for junior data engineering roles. Every tool here is what real companies use — the architecture mirrors a typical S3 → Snowflake → dbt → BI setup, just running locally.
+I'm new to data engineering and noticed most junior portfolios are CSV-to-Postgres scripts that don't reflect what real data teams do. This project follows the same architecture as a production data platform, just running locally instead of on AWS or GCP. Building it forced me to actually understand each component instead of treating the warehouse as a black box.
 
-## License
+If you're hiring junior data engineers, I'd like to talk. The code I'm proudest of is the dimensional modeling in `dbt/olist/models/marts/` and the Airflow DAG with dynamic task mapping in `airflow/dags/dag_ingest_olist.py`. The hardest debugging sessions were on the Spark consumer and the GE-Airflow integration.
 
-MIT
+---
+
+Built by **Abiral Pokhrel**.
+[LinkedIn](https://www.linkedin.com/in/abiralpokhrel2005/) · open to junior data engineering roles.
+
+License: MIT
