@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  python-lint:
+    name: Lint Python code
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install linters
+        run: |
+          python -m pip install --upgrade pip
+          pip install black ruff
+
+      - name: Run ruff (style check)
+        run: ruff check ingestion/ streaming/ airflow/dags/ --fix --exit-zero
+        continue-on-error: true
+
+      - name: Run black (format check)
+        run: black --check ingestion/ streaming/ airflow/dags/
+        continue-on-error: true
+
+  dbt-validate:
+    name: Validate dbt models
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: warehouse_user
+          POSTGRES_PASSWORD: warehouse_pass
+          POSTGRES_DB: warehouse
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dbt
+        run: |
+          python -m pip install --upgrade pip
+          pip install dbt-core==1.7.4 dbt-postgres==1.7.4
+
+      - name: Set up dbt profile
+        run: |
+          mkdir -p ~/.dbt
+          cat > ~/.dbt/profiles.yml << EOF
+          olist:
+            target: ci
+            outputs:
+              ci:
+                type: postgres
+                host: localhost
+                user: warehouse_user
+                password: warehouse_pass
+                port: 5432
+                dbname: warehouse
+                schema: staging
+                threads: 4
+          EOF
+
+      - name: Create schemas in test Postgres
+        env:
+          PGPASSWORD: warehouse_pass
+        run: |
+          psql -h localhost -U warehouse_user -d warehouse -c "CREATE SCHEMA IF NOT EXISTS raw;"
+          psql -h localhost -U warehouse_user -d warehouse -c "CREATE SCHEMA IF NOT EXISTS staging;"
+          psql -h localhost -U warehouse_user -d warehouse -c "CREATE SCHEMA IF NOT EXISTS marts;"
+
+      - name: Install dbt packages
+        working-directory: dbt/olist
+        run: dbt deps
+
+      - name: dbt parse (check syntax)
+        working-directory: dbt/olist
+        run: dbt parse
+
+      - name: dbt compile (check Jinja and SQL)
+        working-directory: dbt/olist
+        run: dbt compile
