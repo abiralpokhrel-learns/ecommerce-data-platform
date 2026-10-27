@@ -6,7 +6,7 @@
 
 A working analytical platform for ~100,000 Brazilian e-commerce orders. Star schema in Postgres, simulated real-time order streaming with Kafka and Spark, automated quality tests, and a Metabase dashboard backed by actual findings from the data. Runs locally with one Docker command.
 
-![E-commerce data pipeline demo](assets/ecommerce-demo.mp4)
+![E-commerce data pipeline demo](assets/ecommerce-flow.gif)
 
 ![Architecture](docs/architecture.png)
 
